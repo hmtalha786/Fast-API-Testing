@@ -1,35 +1,106 @@
-from time import time
-from fastapi import FastAPI, __version__
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+import json
+import pathlib
+from typing import List, Union
+from fastapi import FastAPI, Response
+from models import Track
 
+# instantiate the FastAPI app
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
-html = f"""
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>FastAPI on Vercel</title>
-        <link rel="icon" href="/static/favicon.ico" type="image/x-icon" />
-    </head>
-    <body>
-        <div class="bg-gray-200 p-4 rounded-lg shadow-lg">
-            <h1>Hello from FastAPI@{__version__}</h1>
-            <ul>
-                <li><a href="/docs">/docs</a></li>
-                <li><a href="/redoc">/redoc</a></li>
-            </ul>
-            <p>Powered by <a href="https://vercel.com" target="_blank">Vercel</a></p>
-        </div>
-    </body>
-</html>
-"""
+# create container for our data - to be loaded at app startup.
+data = []
 
-@app.get("/")
-async def root():
-    return HTMLResponse(html)
 
-@app.get('/ping')
-async def hello():
-    return {'res': 'pong', 'version': __version__, "time": time()}
+# ---------------------------------------------------------------------------------------------------
+
+
+@app.on_event("startup")
+async def startup_event():
+    DATAFILE = pathlib.Path() / 'data' / 'tracks.json'
+    with open(DATAFILE, 'r') as f:
+        tracks = json.load(f)
+        for track in tracks:
+            data.append(Track(**track).dict())
+
+    # print(data)
+
+
+# ---------------------------------------------------------------------------------------------------
+
+
+@app.get('/tracks', response_model=List[Track])
+def tracks():
+    return data
+
+
+# ---------------------------------------------------------------------------------------------------
+
+
+@app.get('/tracks/{track_id}', response_model=Union[Track, str])
+def track(track_id: int, response: Response):
+    # find the track with the given ID, or None if it does not exist
+    track = next(
+        (track for track in data if track["id"] == track_id), None
+    )
+    if track is None:
+        # if a track with given ID doesn't exist, set 404 code and return string
+        response.status_code = 404
+        return "Track not found"
+    return track
+
+
+# ---------------------------------------------------------------------------------------------------
+
+
+@app.post("/tracks", response_model=Track, status_code=201)
+def create_track(track: Track):
+    track_dict = track.dict()
+
+    # assign track next sequential ID
+    track_dict['id'] = max(data, key=lambda x: x['id']).get('id') + 1
+
+    # append the track to our data and return 201 response with created resource
+    data.append(track_dict)
+    return track_dict
+
+
+# ---------------------------------------------------------------------------------------------------
+
+
+@app.put("/tracks/{track_id}", response_model=Union[Track, str])
+def update_track(track_id: int, updated_track: Track, response: Response):
+    # find the track with the given ID, or None if it does not exist
+    track = next(
+        (track for track in data if track["id"] == track_id), None
+    )
+
+    if track is None:
+        # if a track with given ID doesn't exist, set 404 code and return string
+        response.status_code = 404
+        return "Track not found"
+
+    # update the track data
+    for key, val in updated_track.dict().items():
+        if key != 'id':  # don't reset the ID
+            track[key] = val
+    return track
+
+
+# ---------------------------------------------------------------------------------------------------
+
+
+@app.delete("/tracks/{track_id}", response_model=str, status_code=200)
+def delete_track(track_id: int, response: Response):
+
+    # get the index of the track to delete
+    delete_index = next(
+        (idx for idx, track in enumerate(data) if track["id"] == track_id), None)
+
+    if delete_index is None:
+        # if a track with given ID doesn't exist, set 404 code and return string
+        response.status_code = 404
+        return "Track not found"
+
+    # delete the track from the data, and return response
+    del data[delete_index]
+    return "Track has been deleted"
