@@ -8,4 +8,4 @@ class Track(BaseModel):
     title: str
     artist: str
     duration: float
-    last_play: datetime
+    last_play: str
